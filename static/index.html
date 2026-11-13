@@ -1,0 +1,106 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>crackdex</title>
+<style>
+:root{--bg:#0b0d10;--fg:#e6e9ef;--mut:#8b93a1;--acc:#3ddc97;--bad:#ff6b6b;--line:#1e232b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 ui-monospace,Menlo,monospace}
+header{padding:14px 20px;border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:center}
+header b{color:var(--acc)}
+main{padding:20px;max-width:900px}
+section{border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:16px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);margin:0 0 10px}
+input,textarea,select{width:100%;background:#12161c;border:1px solid var(--line);color:var(--fg);padding:8px;border-radius:6px;font:inherit;margin-bottom:8px}
+textarea{min-height:80px;resize:vertical}
+button{background:var(--acc);color:#04120b;border:0;padding:8px 14px;border-radius:6px;font-weight:700;cursor:pointer}
+button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg);font-weight:400}
+pre{background:#0f1216;border:1px solid var(--line);padding:10px;border-radius:6px;max-height:280px;overflow:auto;font-size:12px;white-space:pre-wrap}
+.hit{border-left:3px solid var(--acc);padding:8px;margin-bottom:8px;background:#0f1a15}
+.mut{color:var(--mut)}
+</style>
+</head>
+<body>
+<header><b>crackdex</b><span class="mut">seed recovery / brainwallet / login</span></header>
+<main>
+<section>
+  <h2>1 · Seed recovery</h2>
+  <input id="tok" placeholder="APP_TOKEN (if set)">
+  <textarea id="tpl" placeholder="word1 word2 word3 ... (use ? for unknown word)"></textarea>
+  <select id="mode">
+    <option value="one_wrong">one word is wrong (tries all 2048 subs per position)</option>
+    <option value="missing">1-2 words missing (marked with ?)</option>
+    <option value="swap">two words swapped</option>
+  </select>
+  <button onclick="start('seed')">Run</button>
+</section>
+
+<section>
+  <h2>2 · Brainwallet</h2>
+  <textarea id="words" placeholder="one word per line"></textarea>
+  <input id="patterns" value="{a}{b}|{a} {b}|{a}_{b}" placeholder="patterns, {a} {b}">
+  <input id="suffixes" value=",1,123,2024,!" placeholder="suffixes">
+  <button onclick="start('brain')">Run</button>
+</section>
+
+<section>
+  <h2>3 · Exchange login</h2>
+  <textarea id="users" placeholder="emails, one per line"></textarea>
+  <textarea id="pws" placeholder="passwords, one per line"></textarea>
+  <textarea id="cfg" placeholder='{"url":"https://...","method":"POST","headers":{"content-type":"application/json"},"body":"{\"email\":\"{user}\",\"password\":\"{pass}\"}","success_marker":"access_token"}'></textarea>
+  <button onclick="start('login')">Run</button>
+</section>
+
+<section>
+  <h2>Status</h2>
+  <div id="stat" class="mut">idle</div>
+  <pre id="log"></pre>
+  <button class="ghost" onclick="stop()">Stop</button>
+</section>
+
+<section>
+  <h2>Hits</h2>
+  <div id="hits" class="mut">none yet</div>
+</section>
+</main>
+<script>
+let jid = null, timer = null;
+const tok = () => document.getElementById('tok').value;
+const h = () => tok() ? {'x-token': tok(), 'content-type': 'application/json'} : {'content-type': 'application/json'};
+
+async function start(kind) {
+  const body = kind === 'seed'
+    ? {template: tpl.value, mode: mode.value}
+    : kind === 'brain'
+    ? {words: words.value, patterns: patterns.value, suffixes: suffixes.value}
+    : {users: users.value, passwords: pws.value, config: cfg.value};
+  const r = await fetch('/api/' + kind, {method: 'POST', headers: h(), body: JSON.stringify(body)});
+  const d = await r.json();
+  if (!r.ok) { stat.textContent = d.detail || 'error'; return; }
+  jid = d.id;
+  clearInterval(timer);
+  timer = setInterval(poll, 1200);
+  poll();
+}
+
+async function poll() {
+  if (!jid) return;
+  const r = await fetch('/api/job/' + jid, {headers: h()});
+  const d = await r.json();
+  stat.textContent = `${d.state} · ${d.checked}/${d.total} · ${d.rate}/s · ${d.elapsed}s`;
+  log.textContent = d.log.join('\n');
+  log.scrollTop = log.scrollHeight;
+  hits.innerHTML = d.hits.length
+    ? d.hits.map(x => `<div class="hit"><b>${x.address}</b><br>bal ${x.balance_eth} · nonce ${x.nonce}<br>${x.mnemonic || x.secret || ''}</div>`).join('')
+    : 'none yet';
+  if (d.state !== 'running') clearInterval(timer);
+}
+
+async function stop() {
+  if (!jid) return;
+  await fetch('/api/job/' + jid + '/stop', {method: 'POST', headers: h()});
+}
+</script>
+</body>
+</html>
